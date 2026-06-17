@@ -1,0 +1,31 @@
+Ticker,Company_Name,Sector,Foreign_Ownership_Pct_Today,Foreign_Ownership_Pct_Yesterday,Total_Shares,Daily_Close_Price
+2222,Saudi Aramco,Energy,1.88,1.82,242000000000,27.85
+1120,Al Rajhi Bank,Banks,15.42,15.27,4000000000,82.40
+1180,Al Ahli Bank,Banks,11.75,11.80,6000000000,33.15
+1060,SABB,Banks,18.34,18.22,2054794520,38.90
+1150,Alinma Bank,Banks,9.88,9.95,2500000000,28.60
+2010,SABIC,Materials,12.55,12.38,3000000000,71.20
+2350,Saudi Kayan,Materials,3.42,3.39,1500000000,9.85
+1211,Maaden,Materials,7.88,8.05,1230000000,51.40
+2280,Almarai,Food & Beverages,10.12,10.08,1000000000,53.70
+6004,Catrion,Food & Beverages,4.55,4.52,81967213,122.00
+7010,STC,Telecom,16.22,16.18,5000000000,39.85
+7020,Etihad Etisalat,Telecom,8.44,8.51,770000000,52.30
+4001,AlOthaim,Consumer Retail,6.12,6.05,90000000,92.10
+4190,Jarir,Consumer Retail,21.08,21.15,120000000,153.80
+4240,Cenomi Retail,Consumer Retail,5.88,5.82,114884527,14.75
+4003,Extra,Consumer Retail,9.22,9.19,60000000,89.40
+2020,SABIC Agri,Materials,7.15,7.15,300000000,108.50
+1830,Leejam,Consumer Services,11.42,11.55,52357500,154.20
+4001,Retal,Real Estate,4.82,4.75,400000000,15.20
+4300,Dar Al Arkan,Real Estate,13.55,13.40,1080000000,18.65
+4150,Acwa Power,Utilities,14.22,14.08,731525000,240.50
+5110,Saudi Electricity,Utilities,6.18,6.21,4166593815,19.80
+2380,Rabigh Refining,Energy,8.88,8.92,876500000,11.25
+2381,Aldrees,Energy,3.15,3.12,83200000,128.40
+4030,Bahri,Transportation,10.55,10.48,393750000,32.60
+4260,Budget Saudi,Transportation,5.12,5.08,45000000,74.80
+4200,Aldrees Petro,Energy,6.88,6.91,83200000,128.40
+4011,Lazurde,Consumer Retail,2.15,2.10,55200000,13.80
+6010,NADEC,Food & Beverages,8.42,8.35,270000000,26.15
+6040,Tabuk Agri,Food & Beverages,3.88,3.80,60000000,42.30

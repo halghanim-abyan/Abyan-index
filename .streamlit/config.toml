@@ -1,0 +1,21 @@
+# Streamlit configuration (safe to commit — contains NO secrets).
+# Secrets (DATABASE_URL, auth credentials) live in .streamlit/secrets.toml,
+# which is gitignored. On Streamlit Cloud, set them in the app's Secrets UI.
+
+[server]
+headless = true
+enableXsrfProtection = true
+# Local LAN run uses 8504 (run_terminal.bat). Streamlit Cloud ignores this.
+port = 8504
+
+[browser]
+gatherUsageStats = false
+
+# Dark "terminal" theme matching main_app.py's palette.
+[theme]
+base = "dark"
+primaryColor = "#6c8eff"
+backgroundColor = "#080e1d"
+secondaryBackgroundColor = "#0f1830"
+textColor = "#e0e5fb"
+font = "monospace"

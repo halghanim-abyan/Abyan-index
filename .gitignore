@@ -1,0 +1,39 @@
+__pycache__/
+*.py[cod]
+
+# Local data stores and backups
+*.db
+*.db-*
+*.db.bak
+*.db.*
+*.bak
+*.sqlite
+
+# Log files (any extension) + editor/tooling state
+*_log.txt
+.claude/
+
+# Browser/session state and logs
+auth_state.json
+*auth_state*.json
+.runtime/
+*.log
+
+# Secrets / environment (NEVER commit — DB connection strings, tokens)
+.env
+.env.*
+.streamlit/secrets.toml
+secrets.toml
+
+# Raw scraped page captures (large, may embed live page data)
+*_html.txt
+
+# Scraper diagnostics
+debug_*.html
+debug_*.png
+debug_artifacts/
+debug_screenshots/
+
+# Local launchers/shortcuts
+*.lnk
+launchers/
