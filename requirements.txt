@@ -1,27 +1,20 @@
-# ── Core / dashboard ──────────────────────────────────────────────────
-pandas==2.2.3
+# requirements.txt — used by STREAMLIT CLOUD (read-only dashboard).
+# Lean on purpose: NO playwright / curl_cffi / fastapi (heavy, scraper-only)
+# so the cloud build is fast and reliable. The full local/scraper env is in
+# requirements-local.txt.
+#
+# Verified against main_app.py's import graph: only these are needed to import
+# and run the dashboard (reads from Postgres via db.py).
+
 streamlit==1.41.1
+pandas==2.2.3
 plotly==5.24.1
 yfinance>=1.2.2
-
-# ── Local scrapers / backend (NOT needed on Streamlit Cloud) ──────────
-playwright==1.49.1
-aiosqlite==0.20.0
-fastapi>=0.115
-uvicorn>=0.30
 requests>=2.32
-curl_cffi>=0.7
 lxml>=5.3
-
-# ── Excel readers ─────────────────────────────────────────────────────
-# openpyxl: REQUIRED for .xlsx (gastat CPI/APGS tables, real-estate, Tadawul
-#           exports). Was missing — works locally only because it's installed
-#           ad-hoc; a fresh env / Streamlit Cloud would fail without it.
-# xlrd:     kept for the legacy .xls path in tadawul_processor.py (SUPPORTED_EXT).
 openpyxl>=3.1
-xlrd>=2.0.1
 
-# ── Shared data layer — Postgres (Phase 2: db.py / Streamlit Cloud) ───
+# Shared data layer (Postgres)
 SQLAlchemy>=2.0
 psycopg2-binary>=2.9
 python-dotenv>=1.0
