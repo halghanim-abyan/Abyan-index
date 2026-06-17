@@ -6,7 +6,11 @@
 # Verified against main_app.py's import graph: only these are needed to import
 # and run the dashboard (reads from Postgres via db.py).
 
-streamlit==1.41.1
+# Pinned to match the local dev version. The code uses the modern string-width
+# API (st.dataframe(width="stretch"/"content"), st.image(width=...)) added in
+# Streamlit ~1.49+. An older pin (was 1.41.1) makes the cloud raise TypeError
+# "proto.width = width" on those calls. Keep this >= the API the code relies on.
+streamlit==1.55.0
 pandas==2.2.3
 plotly==5.24.1
 yfinance>=1.2.2

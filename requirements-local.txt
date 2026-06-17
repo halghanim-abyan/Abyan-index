@@ -5,7 +5,7 @@
 
 # Core / dashboard
 pandas==2.2.3
-streamlit==1.41.1
+streamlit==1.55.0
 plotly==5.24.1
 yfinance>=1.2.2
 
