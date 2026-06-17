@@ -5,8 +5,13 @@
 [server]
 headless = true
 enableXsrfProtection = true
-# Local LAN run uses 8504 (run_terminal.bat). Streamlit Cloud ignores this.
-port = 8504
+# NOTE: do NOT set `port` here. Streamlit Community Cloud serves the app on
+# :8501 and health-checks that port; a committed `port = 8504` makes the app
+# bind the wrong port on the cloud → the health check gets connection-refused
+# → "Oh no. Error running app" with NO traceback (the app is actually fine,
+# just on the wrong port). The local run sets its port via the CLI flag in
+# run_terminal.bat (`--server.port 8504`), which overrides config anyway, so
+# nothing local depends on this line.
 
 [browser]
 gatherUsageStats = false
