@@ -119,11 +119,29 @@ def get_engine(db: str = DEFAULT_DB):
     from sqlalchemy import create_engine  # lazy import — keeps module light
 
     if IS_POSTGRES:
+        # connect_args are critical on Streamlit Cloud: without a timeout, an
+        # unreachable/slow pooler makes the FIRST connection hang forever, the
+        # health check times out, and the platform kills the process before it
+        # binds :8501 — which shows as "Oh no" + connection-refused with NO
+        # Python traceback. A short timeout turns that silent hang into a fast,
+        # visible error instead. TCP keepalives stop Supabase's pooler from
+        # silently dropping idle connections mid-session.
         return create_engine(
             _normalize_pg_url(DATABASE_URL),
             pool_pre_ping=True,
             pool_recycle=300,
+            pool_size=3,
+            max_overflow=2,
             future=True,
+            connect_args={
+                # NOTE: sslmode is NOT set here — it already lives in the URL
+                # query string; passing it twice makes psycopg2 raise.
+                "connect_timeout": 10,
+                "keepalives": 1,
+                "keepalives_idle": 30,
+                "keepalives_interval": 10,
+                "keepalives_count": 5,
+            },
         )
 
     path = _SQLITE_PATHS.get(db)
