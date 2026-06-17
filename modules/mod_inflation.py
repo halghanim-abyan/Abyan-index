@@ -18,12 +18,20 @@ _DB = "inflation"
 QUALITY_COVERAGE_THRESHOLD = 80.0
 
 
+@st.cache_data(ttl=300)
 def db_fingerprint() -> str:
     """Content signature for Streamlit cache invalidation.
 
     Replaces the old ``os.path.getmtime`` (meaningless for remote Postgres)
     with a cheap data-derived signature that changes whenever a new scrape
     lands. Passed as the cache-key argument to the cached loaders below.
+
+    Cached (ttl=300): this signature query (COUNT + MAX on daily_prices) used
+    to run on EVERY rerun, several times per page — each one a cross-region
+    Postgres round trip (the DB is in Tokyo, the app in the US). Caching it
+    for 5 minutes collapses that to ~one query per 5 min; daily data still
+    surfaces well within that window, and the loaders keyed on it then serve
+    straight from cache during navigation.
     """
     return db.db_signature(_DB, "daily_prices")
 
@@ -352,8 +360,14 @@ def get_latest_inflation_kpi() -> dict:
     }
 
 
+@st.cache_data(ttl=300)
 def db_available() -> bool:
-    """True when the inflation database is reachable (file exists / PG up)."""
+    """True when the inflation database is reachable (file exists / PG up).
+
+    Cached (ttl=300): the sidebar status dots call db_available() for all
+    three databases on every rerun — uncached that is 3 cross-region pings
+    per interaction. A 5-minute cache removes that per-render cost.
+    """
     return db.ping(_DB)
 
 

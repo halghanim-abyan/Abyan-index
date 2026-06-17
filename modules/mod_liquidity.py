@@ -161,5 +161,6 @@ def get_liquidity_kpi() -> dict:
     }
 
 
+@st.cache_data(ttl=300)  # avoid a cross-region ping on every rerun (sidebar status dots)
 def db_available() -> bool:
     return db.ping(_DB)
