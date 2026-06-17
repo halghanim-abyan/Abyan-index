@@ -6,13 +6,20 @@
 # Verified against main_app.py's import graph: only these are needed to import
 # and run the dashboard (reads from Postgres via db.py).
 
-# Pinned to match the local dev version. The code uses the modern string-width
-# API (st.dataframe(width="stretch"/"content"), st.image(width=...)) added in
-# Streamlit ~1.49+. An older pin (was 1.41.1) makes the cloud raise TypeError
-# "proto.width = width" on those calls. Keep this >= the API the code relies on.
+# RENDERING STACK — pinned to EXACTLY the local dev versions that are known to
+# work end-to-end. Letting the cloud resolve "latest" caused two runtime breaks:
+#   • streamlit 1.41.1 (old)  → TypeError on st.dataframe(width="stretch")
+#   • pyarrow 24.x (too new)  → frontend Arrow-JS "RangeError: index out of range"
+#                               (Failed to process a Websocket message)
+# These versions coexist locally, so they are mutually compatible by definition.
+# If you upgrade Streamlit, re-pin pyarrow/plotly/altair to whatever your dev
+# machine resolves alongside it (pip show pyarrow plotly altair).
 streamlit==1.55.0
 pandas==2.2.3
-plotly==5.24.1
+numpy==2.4.3
+pyarrow==23.0.1          # 24+ breaks Streamlit's bundled Arrow-JS reader
+altair==6.0.0
+plotly==6.6.0
 yfinance>=1.2.2
 requests>=2.32
 lxml>=5.3
