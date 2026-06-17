@@ -40,6 +40,7 @@ import auth  # noqa: E402
 auth.require_login()
 
 # ── Import analytical modules ─────────────────────────────────────────────────
+import db  # noqa: E402  (unified data layer; used to hide local-scrape actions on the cloud)
 from modules import mod_inflation, mod_funds, mod_liquidity, mod_robo  # noqa: E402
 from modules import mod_real_estate  # noqa: E402
 from modules import mod_portfolio_composition as mpc  # noqa: E402
@@ -2098,7 +2099,11 @@ def page_rents():
     st.markdown("<p class='section-title'>Rental Asking Price Nowcast · Public Listings</p>", unsafe_allow_html=True)
     nowcast_actions = st.columns([1.05, 3.0])
     with nowcast_actions[0]:
-        if st.button("Refresh asking rents", width="stretch", key="rental_nowcast_refresh"):
+        if db.IS_POSTGRES:
+            # Cloud is a read-only mirror: live scraping runs on the local
+            # pipeline and syncs into Postgres, so don't offer it here.
+            st.caption("Updates automatically from the local pipeline.")
+        elif st.button("Refresh asking rents", width="stretch", key="rental_nowcast_refresh"):
             with st.spinner("Refreshing public rental listing pages..."):
                 summary = mod_real_estate.refresh_rental_listing_nowcast()
             mod_real_estate.load_rental_listing_nowcast.clear()

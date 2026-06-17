@@ -20,6 +20,8 @@ import pandas as pd
 import requests
 import streamlit as st
 
+import db  # unified data layer: SQLite locally, Postgres on Streamlit Cloud
+
 try:
     from curl_cffi import requests as curl_requests
 except Exception:  # noqa: BLE001
@@ -31,6 +33,7 @@ class EjarRateLimitError(RuntimeError):
 
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "inflation_index.db")
+_DB = "inflation"  # logical DB name for the unified db layer (Postgres on cloud)
 
 RENTAL_NOWCAST_SOURCE_NAME = "Aqar public rental listing pages"
 RENTAL_NOWCAST_SOURCE_URL = "https://sa.aqar.fm/en/apartment-for-rent"
@@ -208,10 +211,19 @@ RESIDENTIAL_UNIT_NAMES = {"appartment", "duplex", "floor", "studio", "villa"}
 
 
 def db_available() -> bool:
+    # On the cloud the local .db file does not exist; reachability is a live
+    # ping to Postgres instead. Locally, keep the cheap file-exists check.
+    if db.IS_POSTGRES:
+        return db.ping(_DB)
     return os.path.isfile(DB_PATH)
 
 
-def db_fingerprint() -> float:
+@st.cache_data(ttl=300)
+def db_fingerprint():
+    # Cache key for the loaders. On Postgres, os.path.getmtime is meaningless
+    # (no local file), so derive a content signature from the data instead.
+    if db.IS_POSTGRES:
+        return db.db_signature(_DB, "daily_prices")
     try:
         return os.path.getmtime(DB_PATH)
     except OSError:
@@ -736,30 +748,45 @@ def load_rental_listing_nowcast(
     if not db_available():
         return _empty_rental_nowcast_frames()
 
-    conn = _conn()
-    try:
-        _ensure_rental_nowcast_tables(conn)
-        observations = pd.read_sql_query(
-            """
-            SELECT *
-              FROM rental_listing_observations
-             ORDER BY observed_date ASC, region ASC, city ASC
-            """,
-            conn,
+    if db.IS_POSTGRES:
+        # Cloud: read the pre-synced snapshot from Postgres (no live scraping,
+        # no DDL). These SELECTs are ANSI-standard so the same text runs as-is.
+        observations = db.read_sql(
+            "SELECT * FROM rental_listing_observations "
+            "ORDER BY observed_date ASC, region ASC, city ASC",
+            db=_DB,
             parse_dates=["observed_date", "observed_at"],
         )
-        latest_run = pd.read_sql_query(
-            """
-            SELECT *
-              FROM rental_nowcast_runs
-             ORDER BY id DESC
-             LIMIT 1
-            """,
-            conn,
+        latest_run = db.read_sql(
+            "SELECT * FROM rental_nowcast_runs ORDER BY id DESC LIMIT 1",
+            db=_DB,
             parse_dates=["observed_date", "started_at", "finished_at"],
         )
-    finally:
-        conn.close()
+    else:
+        conn = _conn()
+        try:
+            _ensure_rental_nowcast_tables(conn)
+            observations = pd.read_sql_query(
+                """
+                SELECT *
+                  FROM rental_listing_observations
+                 ORDER BY observed_date ASC, region ASC, city ASC
+                """,
+                conn,
+                parse_dates=["observed_date", "observed_at"],
+            )
+            latest_run = pd.read_sql_query(
+                """
+                SELECT *
+                  FROM rental_nowcast_runs
+                 ORDER BY id DESC
+                 LIMIT 1
+                """,
+                conn,
+                parse_dates=["observed_date", "started_at", "finished_at"],
+            )
+        finally:
+            conn.close()
 
     if observations.empty:
         return _empty_rental_nowcast_frames()
@@ -929,9 +956,12 @@ def load_rent_index_history(_db_mtime: float | None = None) -> pd.DataFrame:
     if not db_available():
         return _empty_rent_frame()
 
-    conn = _conn()
-    try:
-        df = pd.read_sql_query(
+    if db.IS_POSTGRES:
+        # Same aggregation against the migrated daily_prices, but: strftime is
+        # SQLite-only (use RIGHT(date,2)='01' for the first of each month), and
+        # we avoid LIKE '%' so the db layer's %-escaping can't bite — LEFT(...)
+        # is equivalent for the "Residential rent" prefix match.
+        df = db.read_sql(
             """
             SELECT dp.date,
                    AVG(dp.price)          AS rent_index,
@@ -941,20 +971,45 @@ def load_rent_index_history(_db_mtime: float | None = None) -> pd.DataFrame:
              WHERE i.category = 'Housing'
                AND dp.price IS NOT NULL
                AND COALESCE(dp.scrape_status, 'ok') = 'ok'
-               AND strftime('%d', dp.date) = '01'
+               AND RIGHT(CAST(dp.date AS TEXT), 2) = '01'
                AND (
                     dp.store_name = 'GASTAT CPI Category Index'
                     OR i.source_name = 'GASTAT CPI Category Index'
-                    OR i.name LIKE 'Residential rent%'
+                    OR LEFT(i.name, 16) = 'Residential rent'
                )
              GROUP BY dp.date
              ORDER BY dp.date ASC
             """,
-            conn,
+            db=_DB,
             parse_dates=["date"],
         )
-    finally:
-        conn.close()
+    else:
+        conn = _conn()
+        try:
+            df = pd.read_sql_query(
+                """
+                SELECT dp.date,
+                       AVG(dp.price)          AS rent_index,
+                       COUNT(DISTINCT i.id)   AS items
+                  FROM daily_prices dp
+                  JOIN items i ON i.id = dp.item_id
+                 WHERE i.category = 'Housing'
+                   AND dp.price IS NOT NULL
+                   AND COALESCE(dp.scrape_status, 'ok') = 'ok'
+                   AND strftime('%d', dp.date) = '01'
+                   AND (
+                        dp.store_name = 'GASTAT CPI Category Index'
+                        OR i.source_name = 'GASTAT CPI Category Index'
+                        OR i.name LIKE 'Residential rent%'
+                   )
+                 GROUP BY dp.date
+                 ORDER BY dp.date ASC
+                """,
+                conn,
+                parse_dates=["date"],
+            )
+        finally:
+            conn.close()
 
     if df.empty:
         return _empty_rent_frame()
@@ -1314,6 +1369,131 @@ def _apply_ejar_index_scales(series: pd.DataFrame) -> tuple[pd.DataFrame, str | 
     return series, warning
 
 
+def _build_ejar_regional_frames(
+    rows: list[dict[str, Any]],
+    errors: list[str],
+) -> tuple[pd.DataFrame, pd.DataFrame, str | None]:
+    """Turn cached Ejar city rows into the regional series + latest tables.
+
+    Engine-agnostic: it only consumes already-loaded rows, so both the local
+    (SQLite + live fetch) path and the cloud (Postgres, read-only) path share
+    exactly the same aggregation/scaling logic.
+    """
+    if not rows:
+        series, latest, _ = _empty_regional_rent_frames()
+        message = "No Ejar regional rent rows returned."
+        if errors:
+            message += " " + " | ".join(errors[:3])
+        return series, latest, message
+
+    city_monthly = pd.DataFrame(rows)
+    series = (
+        city_monthly.groupby(["region", "date"], as_index=False)
+                    .agg(
+                        sum_rent=("sum_rent", "sum"),
+                        contracts=("contracts", "sum"),
+                        cities_observed=("city_id", "nunique"),
+                    )
+    )
+    expected = {
+        region: len(cities)
+        for region, cities in REGIONAL_RENT_CITY_GROUPS.items()
+    }
+    series["cities_expected"] = series["region"].map(expected)
+    series["avg_annual_rent"] = series["sum_rent"] / series["contracts"]
+    series = series.sort_values(["region", "date"]).reset_index(drop=True)
+    series, common_index_warning = _apply_ejar_index_scales(series)
+    if common_index_warning:
+        errors.append(common_index_warning)
+    series["mom_pct"] = series.groupby("region")["avg_annual_rent"].pct_change() * 100.0
+    series["source_name"] = EJAR_SOURCE_NAME
+    series["source_url"] = EJAR_SOURCE_URL
+
+    latest_rows = (
+        series.sort_values("date")
+              .groupby("region", as_index=False)
+              .tail(1)
+              .sort_values("avg_annual_rent", ascending=False)
+              .copy()
+    )
+    city_names = {
+        region: "، ".join(city["city_ar"] for city in cities)
+        for region, cities in REGIONAL_RENT_CITY_GROUPS.items()
+    }
+    latest_rows["Region"] = latest_rows["region"]
+    latest_rows["Cities"] = latest_rows["region"].map(city_names)
+    latest_rows["Latest Period"] = latest_rows["date"].dt.strftime("%Y-%m")
+    latest_rows["Unified Index"] = latest_rows["rent_index_common"]
+    latest_rows["Avg Annual Rent (SAR)"] = latest_rows["avg_annual_rent"].round(0).astype(int)
+    latest_rows["Contracts"] = latest_rows["contracts"].round(0).astype(int)
+    latest_rows["MoM"] = latest_rows["mom_pct"]
+    latest_rows["Coverage"] = (
+        latest_rows["cities_observed"].astype(int).astype(str)
+        + "/"
+        + latest_rows["cities_expected"].astype(int).astype(str)
+        + " cities"
+    )
+    latest_rows["Source"] = "Ejar/Sakani"
+    latest = latest_rows[
+        [
+            "Region",
+            "Cities",
+            "Latest Period",
+            "Unified Index",
+            "Avg Annual Rent (SAR)",
+            "Contracts",
+            "MoM",
+            "Coverage",
+            "Source",
+        ]
+    ].reset_index(drop=True)
+
+    keep_cols = [
+        "date",
+        "region",
+        "avg_annual_rent",
+        "contracts",
+        "rent_index",
+        "rent_index_local",
+        "rent_index_common",
+        "mom_pct",
+        "cities_observed",
+        "cities_expected",
+        "baseline_date",
+        "baseline_avg_annual_rent",
+        "source_name",
+        "source_url",
+    ]
+    error = " | ".join(errors[:5]) if errors else None
+    return series[keep_cols], latest, error
+
+
+def _load_ejar_regional_rent_index_pg(history_years: int | None) -> tuple[pd.DataFrame, pd.DataFrame, str | None]:
+    """Cloud path: build the regional Ejar series purely from the Postgres
+    cache (``ejar_city_monthly``). No live Ejar API calls — those run only on
+    the local pipeline and sync their results into Postgres."""
+    history_years = _bounded_ejar_history_years(history_years)
+    mxdf = db.read_sql("SELECT MAX(date) AS mx FROM ejar_city_monthly", db=_DB)
+    max_raw = mxdf.iloc[0]["mx"] if not mxdf.empty else None
+    max_date = pd.to_datetime(max_raw, errors="coerce") if max_raw is not None else pd.NaT
+    if pd.isna(max_date):
+        series, latest, _ = _empty_regional_rent_frames()
+        return series, latest, "No cached Ejar regional rent data is available yet."
+
+    end_date = pd.Timestamp(max_date.year, max_date.month, 1)
+    _windows, earliest_start = _ejar_period_windows(end_date, history_years)
+    rows_df = db.read_sql(
+        "SELECT region, city_ar, city_en, city_id, date, sum_rent, contracts "
+        "FROM ejar_city_monthly WHERE date >= ? AND date <= ? "
+        "ORDER BY region, city_id, date",
+        params=(_ejar_date_key(earliest_start), _ejar_date_key(end_date)),
+        db=_DB,
+        parse_dates=["date"],
+    )
+    rows = rows_df.to_dict("records") if not rows_df.empty else []
+    return _build_ejar_regional_frames(rows, [])
+
+
 @st.cache_data(ttl=15 * 60, show_spinner=False)
 def load_ejar_regional_rent_index(history_years: int | None = None) -> tuple[pd.DataFrame, pd.DataFrame, str | None]:
     """Regional rent index from Ejar documented residential rental contracts.
@@ -1321,6 +1501,9 @@ def load_ejar_regional_rent_index(history_years: int | None = None) -> tuple[pd.
     The level is an average annual rent, not CPI. Regional monthly index values
     are rebased to the first available month so regional direction is readable.
     """
+    if db.IS_POSTGRES:
+        return _load_ejar_regional_rent_index_pg(history_years)
+
     history_years = _bounded_ejar_history_years(history_years)
     _start_date, end_date, period_error = _latest_ejar_period()
     live_period_available = period_error is None
@@ -1422,93 +1605,7 @@ def load_ejar_regional_rent_index(history_years: int | None = None) -> tuple[pd.
     finally:
         conn.close()
 
-    if not rows:
-        series, latest, _ = _empty_regional_rent_frames()
-        message = "No Ejar regional rent rows returned."
-        if errors:
-            message += " " + " | ".join(errors[:3])
-        return series, latest, message
-
-    city_monthly = pd.DataFrame(rows)
-    series = (
-        city_monthly.groupby(["region", "date"], as_index=False)
-                    .agg(
-                        sum_rent=("sum_rent", "sum"),
-                        contracts=("contracts", "sum"),
-                        cities_observed=("city_id", "nunique"),
-                    )
-    )
-    expected = {
-        region: len(cities)
-        for region, cities in REGIONAL_RENT_CITY_GROUPS.items()
-    }
-    series["cities_expected"] = series["region"].map(expected)
-    series["avg_annual_rent"] = series["sum_rent"] / series["contracts"]
-    series = series.sort_values(["region", "date"]).reset_index(drop=True)
-    series, common_index_warning = _apply_ejar_index_scales(series)
-    if common_index_warning:
-        errors.append(common_index_warning)
-    series["mom_pct"] = series.groupby("region")["avg_annual_rent"].pct_change() * 100.0
-    series["source_name"] = EJAR_SOURCE_NAME
-    series["source_url"] = EJAR_SOURCE_URL
-
-    latest_rows = (
-        series.sort_values("date")
-              .groupby("region", as_index=False)
-              .tail(1)
-              .sort_values("avg_annual_rent", ascending=False)
-              .copy()
-    )
-    city_names = {
-        region: "، ".join(city["city_ar"] for city in cities)
-        for region, cities in REGIONAL_RENT_CITY_GROUPS.items()
-    }
-    latest_rows["Region"] = latest_rows["region"]
-    latest_rows["Cities"] = latest_rows["region"].map(city_names)
-    latest_rows["Latest Period"] = latest_rows["date"].dt.strftime("%Y-%m")
-    latest_rows["Unified Index"] = latest_rows["rent_index_common"]
-    latest_rows["Avg Annual Rent (SAR)"] = latest_rows["avg_annual_rent"].round(0).astype(int)
-    latest_rows["Contracts"] = latest_rows["contracts"].round(0).astype(int)
-    latest_rows["MoM"] = latest_rows["mom_pct"]
-    latest_rows["Coverage"] = (
-        latest_rows["cities_observed"].astype(int).astype(str)
-        + "/"
-        + latest_rows["cities_expected"].astype(int).astype(str)
-        + " cities"
-    )
-    latest_rows["Source"] = "Ejar/Sakani"
-    latest = latest_rows[
-        [
-            "Region",
-            "Cities",
-            "Latest Period",
-            "Unified Index",
-            "Avg Annual Rent (SAR)",
-            "Contracts",
-            "MoM",
-            "Coverage",
-            "Source",
-        ]
-    ].reset_index(drop=True)
-
-    keep_cols = [
-        "date",
-        "region",
-        "avg_annual_rent",
-        "contracts",
-        "rent_index",
-        "rent_index_local",
-        "rent_index_common",
-        "mom_pct",
-        "cities_observed",
-        "cities_expected",
-        "baseline_date",
-        "baseline_avg_annual_rent",
-        "source_name",
-        "source_url",
-    ]
-    error = " | ".join(errors[:5]) if errors else None
-    return series[keep_cols], latest, error
+    return _build_ejar_regional_frames(rows, errors)
 
 
 def _empty_repi_frame() -> pd.DataFrame:
